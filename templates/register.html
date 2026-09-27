@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Register - Recon X{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Recon X</h1>
+  <h2>Create an account</h2>
+  <form method="POST" action="{{ url_for('register') }}">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" required>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required>
+    <label for="confirm_password">Confirm password</label>
+    <input type="password" id="confirm_password" name="confirm_password" required>
+    <button type="submit">Register</button>
+  </form>
+  <p style="margin-top:1rem; font-size:0.9rem;">Already registered? <a href="{{ url_for('login') }}">Login</a></p>
+</div>
+{% endblock %}
