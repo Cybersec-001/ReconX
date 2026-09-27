@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Login - Recon X{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Recon X</h1>
+  <h2>Sign in</h2>
+  <form method="POST" action="{{ url_for('login') }}">
+    <label for="username">Username</label>
+    <input type="text" id="username" name="username" required>
+    <label for="password">Password</label>
+    <input type="password" id="password" name="password" required>
+    <button type="submit">Login</button>
+  </form>
+  <p style="margin-top:1rem; font-size:0.9rem;">No account? <a href="{{ url_for('register') }}">Register</a></p>
+</div>
+{% endblock %}
