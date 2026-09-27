@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Scan - Recon X{% endblock %}
+{% block content %}
+<div class="nav">
+  Signed in as {{ current_user.username }}
+  {% if current_user.is_admin %}· <a href="{{ url_for('admin') }}">Admin panel</a>{% endif %}
+  · <a href="{{ url_for('logout') }}">Logout</a>
+</div>
+<div class="card">
+  <h1>Recon X - OSINT Scan</h1>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  <form method="POST" action="{{ url_for('index') }}">
+    <label for="domain">Domain</label>
+    <input type="text" id="domain" name="domain" placeholder="example.com" required>
+    <label for="email">Email</label>
+    <input type="email" id="email" name="email" placeholder="name@example.com" required>
+    <label for="url">Website URL</label>
+    <input type="text" id="url" name="url" placeholder="https://example.com" required>
+    <label for="ip">IP address</label>
+    <input type="text" id="ip" name="ip" placeholder="8.8.8.8" required>
+    <button type="submit">Run scan</button>
+  </form>
+</div>
+{% endblock %}
