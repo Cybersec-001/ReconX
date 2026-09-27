@@ -1,53 +1,92 @@
 # Recon X - OSINT Intelligence Tool
 
-A powerful web-based OSINT (Open Source Intelligence) tool that provides the following features:
+A web-based OSINT (Open Source Intelligence) dashboard built with Flask. Give it a domain, an email, a URL and an IP address, and it pulls together publicly available intelligence into one view, with an optional PDF report.
 
 ## Features
 
-- WHOIS Data Retrieval
-- Email Validation
-- Website Title Extraction
-- IP Geolocation
-- Shodan Scanning
-- Historical URL Lookup (Wayback Machine)
-- PDF Report Generation
-- Multi-user Support
-- Admin Panel
+- **WHOIS lookup** - registration and ownership data for a domain
+- **crt.sh subdomain enumeration** - subdomains from public certificate transparency logs
+- **Wayback Machine history** - historical URLs captured for a domain
+- **IP geolocation** - location and network details for an IP (via ipinfo.io)
+- **Shodan host lookup** - open ports and service banners Shodan has indexed for an IP
+- **Email format validation**
+- **Website title extraction**
+- **PDF report generation** - export the full result set as a report (ReportLab)
+- **Multi-user accounts with an admin panel** - activate/deactivate or remove users
+- **Rate limiting, hashed passwords, session management** (Flask-Limiter, Werkzeug, Flask-Login)
+
+> Use this tool only on domains, IPs and systems you own or have permission to test.
+
+## Tech stack
+
+Python 3 · Flask · Flask-SQLAlchemy (SQLite) · Flask-Login · Flask-Limiter · Shodan API · ipinfo API · python-whois · crt.sh · Wayback Machine CDX API · ReportLab · PyJWT
 
 ## Setup
 
-1. Install required packages:
 ```bash
+git clone https://github.com/Cybersec-001/ReconX.git
+cd ReconX
+python -m venv venv
+source venv/bin/activate      # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-2. Set environment variables:
+Create your `.env` (see `.env.example`):
+
 ```bash
-SHODAN_API_KEY=your_shodan_api_key
-IPINFO_ACCESS_TOKEN=your_ipinfo_token
-SECRET_KEY=your_secret_key
+cp .env.example .env
+python generate_secret_key.py   # writes a fresh SECRET_KEY into .env
 ```
 
-3. Run the application:
+Then fill in the optional values in `.env`:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `SECRET_KEY` | Yes | Flask session/JWT signing. App refuses to start without it. |
+| `ADMIN_USERNAME` + `ADMIN_PASSWORD` | No | When both are set, an admin account is created on first run. |
+| `SHODAN_API_KEY` | No | Enables Shodan host lookups. |
+| `IPINFO_ACCESS_TOKEN` | No | Enables IP geolocation. |
+| `VIRUSTOTAL_API_KEY`, `HIBP_API_KEY`, `CENSYS_API_ID`, `CENSYS_API_SECRET` | No | Reserved for additional lookups. |
+| `FLASK_DEBUG` | No | `true` enables Flask debug mode for local development. Never enable in production. |
+
+## Run
+
 ```bash
 python app.py
 ```
 
-## Security Features
+Open http://127.0.0.1:5000, register an account, and run a scan.
 
-- User Authentication
-- Rate Limiting
-- API Key Validation
-- Session Management
+For production, serve with gunicorn (included in requirements):
 
-## API Endpoints
+```bash
+gunicorn app:app
+```
 
-- `/`: Main scanning page
-- `/login`: Login page
-- `/register`: Registration page
-- `/admin`: Admin panel
-- `/download_pdf`: PDF report download
+## Project structure
+
+```
+app.py                  Flask application and routes
+config.py               Env-based config (no hardcoded fallbacks)
+generate_secret_key.py  Writes a fresh SECRET_KEY into .env
+templates/              Jinja templates (login, register, scan, results, admin)
+static/                 Stylesheet
+```
+
+## Security notes
+
+- No default credentials: `SECRET_KEY` is mandatory and the admin account exists only if you set one via env vars.
+- Passwords are stored as Werkzeug hashes; the SQLite database and `.env` are git-ignored.
+- Login, registration and PDF export are rate-limited.
+- Debug mode is off unless `FLASK_DEBUG=true` is set explicitly.
+
+## API endpoints / pages
+
+- `/` - main scanning page (login required)
+- `/login`, `/register` - account pages
+- `/admin` - admin panel (admin users only)
+- `/download_pdf` - PDF report of the latest scan
 
 ## Contributing
 
-Please send pull requests to contribute to this project.
+Pull requests are welcome.

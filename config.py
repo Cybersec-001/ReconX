@@ -6,17 +6,16 @@ from dotenv import load_dotenv, find_dotenv
 load_dotenv(find_dotenv())
 
 
-# API Keys
-SHODAN_API_KEY = os.getenv("SHODAN_API_KEY", "default_shodan_key")
-
-IPINFO_ACCESS_TOKEN = os.getenv("IPINFO_ACCESS_TOKEN", "default_ipinfo_token")
+# API Keys (no default fallbacks - a missing key must stay missing)
+SHODAN_API_KEY = os.getenv("SHODAN_API_KEY")
+IPINFO_ACCESS_TOKEN = os.getenv("IPINFO_ACCESS_TOKEN")
 
 
 # Flask Configuration
 class Config:
     DEBUG = False
     TESTING = False
-    SECRET_KEY = os.getenv("SECRET_KEY", "your_default_secret_key")
+    SECRET_KEY = os.getenv("SECRET_KEY")
 
 class DevelopmentConfig(Config):
     DEBUG = True

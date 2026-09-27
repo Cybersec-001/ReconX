@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Results - Recon X{% endblock %}
+{% block content %}
+<div class="nav">
+  <a href="{{ url_for('index') }}">New scan</a>
+  <a href="{{ url_for('download_pdf') }}">Download PDF report</a>
+  <a href="{{ url_for('logout') }}">Logout</a>
+</div>
+<div class="card">
+  <h1>Scan results</h1>
+</div>
+<div class="card">
+  <h2>WHOIS</h2>
+  <pre>{{ whois_data }}</pre>
+</div>
+<div class="card">
+  <h2>Email validation</h2>
+  <pre>{{ email_validation }}</pre>
+</div>
+<div class="card">
+  <h2>Website title</h2>
+  <pre>{{ website_title }}</pre>
+</div>
+<div class="card">
+  <h2>IP geolocation</h2>
+  <pre>{{ ip_geolocation | pprint }}</pre>
+</div>
+<div class="card">
+  <h2>Shodan</h2>
+  <pre>{{ shodan_scan | pprint }}</pre>
+</div>
+<div class="card">
+  <h2>Subdomains (crt.sh)</h2>
+  <pre>{{ subdomains | pprint }}</pre>
+</div>
+<div class="card">
+  <h2>Historical URLs (Wayback Machine)</h2>
+  <pre>{{ wayback_urls | pprint }}</pre>
+</div>
+{% endblock %}

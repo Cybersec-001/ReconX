@@ -29,11 +29,20 @@ urllib3.disable_warnings()
 load_dotenv()
 SHODAN_API_KEY = os.getenv("SHODAN_API_KEY")
 IPINFO_ACCESS_TOKEN = os.getenv("IPINFO_ACCESS_TOKEN")
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-# New API Keys
+# SECRET_KEY is required - no insecure fallback.
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY is not set. Generate one with `python generate_secret_key.py` "
+        "or copy .env.example to .env and fill it in."
+    )
+
+# Admin user is created on first run only when BOTH are set.
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")
+
+# Optional API keys (features degrade gracefully when unset)
 VIRUSTOTAL_API_KEY = os.getenv('VIRUSTOTAL_API_KEY')
 HIBP_API_KEY = os.getenv('HIBP_API_KEY')
 CENSYS_API_ID = os.getenv('CENSYS_API_ID')
@@ -44,7 +53,7 @@ app = Flask(__name__, static_folder="static")
 app.config['SECRET_KEY'] = SECRET_KEY
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hour session lifetime
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
 
 # Initialize extensions
 db = SQLAlchemy(app)
@@ -77,26 +86,33 @@ class User(UserMixin, db.Model):
         return check_password_hash(self.password_hash, password)
 
 @login_manager.user_loader
-def load_user(username):
-    if username == ADMIN_USERNAME:
-        return User(username)
-    return User.query.filter_by(username=username).first()
+def load_user(user_id):
+    # Flask-Login passes the value returned by User.get_id() (the primary key as a string)
+    try:
+        return User.query.get(int(user_id))
+    except (ValueError, TypeError):
+        return None
 
-# Drop all tables and create new ones
+# Create tables if they do not exist (never drop existing data)
 with app.app_context():
-    db.drop_all()  # Drop all existing tables
-    db.create_all()  # Create new tables
-    
-    # Create admin user if not exists
-    if not User.query.filter_by(username=ADMIN_USERNAME).first():
-        admin = User(
-            username=ADMIN_USERNAME,
-            is_admin=True,
-            created_at=datetime.utcnow()
+    db.create_all()
+
+    # Create admin user on first run, only when credentials are provided via env
+    if ADMIN_USERNAME and ADMIN_PASSWORD:
+        if not User.query.filter_by(username=ADMIN_USERNAME).first():
+            admin = User(
+                username=ADMIN_USERNAME,
+                is_admin=True,
+                created_at=datetime.utcnow()
+            )
+            admin.set_password(ADMIN_PASSWORD)
+            db.session.add(admin)
+            db.session.commit()
+    else:
+        app.logger.warning(
+            "ADMIN_USERNAME/ADMIN_PASSWORD not set - no admin user created. "
+            "You can still register a normal account; set both variables to enable the admin panel."
         )
-        admin.set_password(ADMIN_PASSWORD)
-        db.session.add(admin)
-        db.session.commit()
 
 # Token Required Decorator
 def token_required(f):
@@ -105,22 +121,24 @@ def token_required(f):
         token = request.args.get('token')
         if not token:
             token = request.headers.get('X-API-Token')
-        
+
         if not token:
             return {'message': 'Token is missing'}, 401
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             current_user = User.query.get(data['user_id'])
-        except:
+            if current_user is None:
+                return {'message': 'Token is invalid'}, 401
+        except Exception:
             return {'message': 'Token is invalid'}, 401
 
         return f(current_user, *args, **kwargs)
     return decorated
 
-# Initialize APIs
-shodan_api = shodan.Shodan(SHODAN_API_KEY)
-ipinfo_handler = ipinfo.getHandler(IPINFO_ACCESS_TOKEN)
+# Initialize APIs (optional - routes report a clear error when a key is missing)
+shodan_api = shodan.Shodan(SHODAN_API_KEY) if SHODAN_API_KEY else None
+ipinfo_handler = ipinfo.getHandler(IPINFO_ACCESS_TOKEN) if IPINFO_ACCESS_TOKEN else None
 
 # WHOIS Lookup
 def get_whois_data(domain):
@@ -152,7 +170,7 @@ def get_website_title(url):
             url = 'https://' + url
         response = requests.get(url, timeout=5)
         response.raise_for_status()
-        
+
         # Use regex to extract title
         title_match = re.search('<title>(.*?)</title>', response.text, re.IGNORECASE)
         if title_match:
@@ -163,6 +181,8 @@ def get_website_title(url):
 
 # IP Geolocation
 def get_ip_geolocation(ip):
+    if ipinfo_handler is None:
+        return "IP geolocation unavailable: IPINFO_ACCESS_TOKEN is not set."
     try:
         details = ipinfo_handler.getDetails(ip)
         return details.all
@@ -173,6 +193,8 @@ def get_ip_geolocation(ip):
 
 # Shodan API Scan
 def get_shodan_scan(ip):
+    if shodan_api is None:
+        return "Shodan lookup unavailable: SHODAN_API_KEY is not set."
     try:
         host = shodan_api.host(ip)
         return host
@@ -189,7 +211,8 @@ def get_censys_data(domain):
         response = requests.get(
             f'https://search.censys.io/api/v2/hosts/search?q={domain}',
             headers=headers,
-            auth=auth
+            auth=auth,
+            timeout=10
         )
         if response.status_code == 200:
             return response.json()
@@ -206,7 +229,8 @@ def get_hibp_breaches(email):
         }
         response = requests.get(
             f'https://haveibeenpwned.com/api/v3/breachedaccount/{email}',
-            headers=headers
+            headers=headers,
+            timeout=10
         )
         if response.status_code == 200:
             return response.json()
@@ -219,7 +243,7 @@ def get_hibp_breaches(email):
 def get_crt_subdomains(domain):
     """Get SSL certificate subdomains from crt.sh"""
     try:
-        response = requests.get(f'https://crt.sh/?q=%.{domain}&output=json')
+        response = requests.get(f'https://crt.sh/?q=%.{domain}&output=json', timeout=10)
         if response.status_code == 200:
             data = response.json()
             subdomains = list(set([item['name_value'] for item in data]))
@@ -236,7 +260,8 @@ def get_virustotal_data(domain):
         }
         response = requests.get(
             f'https://www.virustotal.com/api/v3/domains/{domain}',
-            headers=headers
+            headers=headers,
+            timeout=10
         )
         if response.status_code == 200:
             return response.json()
@@ -248,7 +273,8 @@ def get_wayback_urls(domain):
     """Get historical URLs from Wayback Machine"""
     try:
         response = requests.get(
-            f'http://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&collapse=urlkey'
+            f'http://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&collapse=urlkey',
+            timeout=10
         )
         if response.status_code == 200:
             data = response.json()
@@ -285,20 +311,22 @@ def index():
             website_title = get_website_title(url)
             ip_geolocation = get_ip_geolocation(ip)
             shodan_scan = get_shodan_scan(ip)
+            subdomains = get_crt_subdomains(domain)
             wayback_urls = get_wayback_urls(domain)
 
             # Store all results in session
             store_results_in_session(
-                whois_data, email_validation, website_title, 
-                ip_geolocation, shodan_scan, wayback_urls
+                whois_data, email_validation, website_title,
+                ip_geolocation, shodan_scan, subdomains, wayback_urls
             )
 
             return render_template("result.html",
-                               whois_data=whois_data, 
+                               whois_data=whois_data,
                                email_validation=email_validation,
                                website_title=website_title,
                                ip_geolocation=ip_geolocation,
                                shodan_scan=shodan_scan,
+                               subdomains=subdomains,
                                wayback_urls=wayback_urls)
         except Exception as e:
             return render_template("index.html", error=f"Error: {str(e)}")
@@ -337,27 +365,27 @@ def login():
     if request.method == "POST":
         username = request.form.get("username")
         password = request.form.get("password")
-        
+
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
             if not user.is_active:
                 flash("Your account has been deactivated")
                 return render_template("login.html")
-                
+
             login_user(user)
             user.last_login = datetime.utcnow()
             db.session.commit()
-            
+
             token = jwt.encode({
                 'user_id': user.id,
                 'exp': datetime.utcnow() + timedelta(days=1)
             }, app.config['SECRET_KEY'])
             session['token'] = token
-            
+
             if user.is_admin:
                 return redirect(url_for('admin'))
             return redirect(url_for('index'))
-        
+
         flash('Invalid username or password')
     return render_template("login.html")
 
@@ -374,7 +402,7 @@ def admin():
     if not current_user.is_admin:
         flash("Access denied")
         return redirect(url_for("index"))
-    
+
     users = User.query.all()
     return render_template("admin.html", users=users)
 
@@ -384,12 +412,12 @@ def toggle_user(user_id):
     if not current_user.is_admin:
         flash("Access denied")
         return redirect(url_for("index"))
-    
+
     user = User.query.get_or_404(user_id)
-    if user.username == ADMIN_USERNAME:
+    if ADMIN_USERNAME and user.username == ADMIN_USERNAME:
         flash("Cannot modify admin user")
         return redirect(url_for("admin"))
-    
+
     user.is_active = not user.is_active
     db.session.commit()
     flash(f"User {user.username} {'activated' if user.is_active else 'deactivated'}")
@@ -401,12 +429,12 @@ def delete_user(user_id):
     if not current_user.is_admin:
         flash("Access denied")
         return redirect(url_for("index"))
-    
+
     user = User.query.get_or_404(user_id)
-    if user.username == ADMIN_USERNAME:
+    if ADMIN_USERNAME and user.username == ADMIN_USERNAME:
         flash("Cannot delete admin user")
         return redirect(url_for("admin"))
-    
+
     db.session.delete(user)
     db.session.commit()
     flash(f"User {user.username} deleted")
@@ -423,6 +451,7 @@ def download_pdf():
         website_title = session.get('website_title')
         ip_geolocation = session.get('ip_geolocation')
         shodan_scan = session.get('shodan_scan')
+        subdomains = session.get('subdomains')
         wayback_urls = session.get('wayback_urls')
 
         if not all([whois_data, email_validation, website_title, ip_geolocation, shodan_scan]):
@@ -432,16 +461,16 @@ def download_pdf():
         buffer = io.BytesIO()
         p = canvas.Canvas(buffer, pagesize=letter)
         width, height = letter
-        
+
         # Title and Header
         p.setFont("Helvetica-Bold", 16)
         p.drawString(50, height - 50, "Recon X Intelligence Report")
-        
+
         p.setFont("Helvetica", 10)
         p.drawString(50, height - 70, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         p.drawString(50, height - 90, f"Generated by: {current_user.username}")
         p.line(50, height - 100, width - 50, height - 100)
-        
+
         y_position = height - 130
 
         # Function to add section with page break check
@@ -449,24 +478,24 @@ def download_pdf():
             if y_pos < 100:
                 p.showPage()
                 y_pos = height - 50
-            
+
             p.setFont("Helvetica-Bold", 12)
             p.drawString(50, y_pos, title)
             p.setFont("Helvetica", 10)
             y_pos -= 20
-            
+
             if isinstance(data, (list, dict)):
                 if isinstance(data, dict):
                     items = data.items()
                 else:
                     items = enumerate(data)
-                
+
                 for key, value in items:
                     if y_pos < 100:
                         p.showPage()
                         y_pos = height - 50
                         p.setFont("Helvetica", 10)
-                    
+
                     text = f"{key}: {value}" if isinstance(data, dict) else str(value)
                     p.drawString(70, y_pos, text[:100] + '...' if len(text) > 100 else text)
                     y_pos -= 15
@@ -475,11 +504,11 @@ def download_pdf():
                     p.showPage()
                     y_pos = height - 50
                     p.setFont("Helvetica", 10)
-                
+
                 text = str(data)
                 p.drawString(70, y_pos, text[:100] + '...' if len(text) > 100 else text)
                 y_pos -= 15
-            
+
             return y_pos - 20
 
         # Add all sections
@@ -489,6 +518,7 @@ def download_pdf():
             ("Website Title", website_title),
             ("IP Geolocation", ip_geolocation),
             ("Shodan Scan Results", shodan_scan),
+            ("Subdomains (crt.sh)", subdomains),
             ("Historical URLs (Wayback Machine)", wayback_urls)
         ]
 
@@ -499,28 +529,31 @@ def download_pdf():
         p.showPage()
         p.save()
         buffer.seek(0)
-        
+
         return send_file(
             buffer,
             download_name='recon_x_report.pdf',
             as_attachment=True,
             mimetype='application/pdf'
         )
-        
+
     except Exception as e:
         flash(f"Error generating PDF: {str(e)}")
         return redirect(url_for('index'))
 
 # Store results in session after scan
-def store_results_in_session(whois_data, email_validation, website_title, ip_geolocation, shodan_scan, wayback_urls):
+def store_results_in_session(whois_data, email_validation, website_title, ip_geolocation, shodan_scan, subdomains, wayback_urls):
     """Store all scan results in session for PDF generation"""
     session['whois_data'] = whois_data
     session['email_validation'] = email_validation
     session['website_title'] = website_title
     session['ip_geolocation'] = ip_geolocation
     session['shodan_scan'] = shodan_scan
+    session['subdomains'] = subdomains
     session['wayback_urls'] = wayback_urls
     session.modified = True
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    # Debug stays OFF unless FLASK_DEBUG is explicitly enabled (never enable it in production)
+    debug_mode = os.getenv("FLASK_DEBUG", "false").strip().lower() in ("1", "true", "yes")
+    app.run(debug=debug_mode)
