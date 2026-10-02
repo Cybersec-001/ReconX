@@ -219,15 +219,24 @@ def get_website_title(url):
 
 # IP Geolocation
 def get_ip_geolocation(ip):
-    if ipinfo_handler is None:
-        return "IP geolocation unavailable: IPINFO_ACCESS_TOKEN is not set."
+    if not IPINFO_ACCESS_TOKEN:
+        return "IPinfo unavailable: API token is not configured."
     try:
-        details = ipinfo_handler.getDetails(ip)
-        return details.all
-    except ipinfo.exceptions.RequestQuotaExceededError:
-        return "Error: API quota exceeded."
-    except Exception as e:
-        return f"Error: {str(e)}"
+        response = requests.get('https://api.ipinfo.io/lite/' + ip,
+            headers={'Authorization': 'Bearer ' + IPINFO_ACCESS_TOKEN}, timeout=8)
+        if response.status_code == 429:
+            return 'IPinfo rate limit reached. Try again later.'
+        if response.status_code in (401, 403):
+            return 'IPinfo access unavailable. Check the configured token.'
+        response.raise_for_status()
+        payload = response.json()
+        allowed = ['ip', 'asn', 'as_name', 'as_domain', 'country_code',
+            'country', 'continent_code', 'continent']
+        result = {key: payload[key] for key in allowed if key in payload}
+        result['source'] = 'IPinfo Lite (country and ASN only; no city-level location)'
+        return result
+    except Exception:
+        return 'IPinfo source unavailable or timed out. Try again later.'
 
 # Shodan API Scan
 def get_shodan_scan(ip):
