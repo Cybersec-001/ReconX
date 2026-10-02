@@ -90,3 +90,18 @@ static/                 Stylesheet
 ## Contributing
 
 Pull requests are welcome.
+
+## Hosted portfolio demo
+
+The public landing page and `/demo` use clearly labeled sample data. The signed-in `/workspace` keeps real WHOIS, certificate transparency and archive lookups. Shodan and IP geolocation need optional API keys; missing keys never produce fake live results.
+
+Deploy as a **free Render web service**, Python runtime:
+
+- Build: `pip install -r requirements.txt`
+- Start: `gunicorn app:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT`
+- Set a generated `SECRET_KEY`. Do not set demo admin credentials.
+- Health check: `/health`
+
+Free Render has an ephemeral filesystem. SQLite accounts disappear on a restart or redeploy, and the in-memory report cache/rate limits reset too. This is a portfolio demo, not a durable production account system. Do not use sensitive data. For persistent hosting, configure `DATABASE_URL` and its database driver plus shared rate-limit storage before offering real accounts.
+
+Security changes include CSRF-protected POST forms, POST-only admin mutations, bounded input/report sizes, private-address checks for title requests, redirect blocking and password length validation. These are hardening steps, not a security certification. Rate limits are per process, public-source results depend on upstream availability, and free hosting can have cold starts.
