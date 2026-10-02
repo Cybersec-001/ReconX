@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}Results - Recon X{% endblock %}
 {% block content %}
+<style>
+.result-facts{margin:22px 0 0}.result-facts>div{display:grid;grid-template-columns:180px minmax(0,1fr);gap:18px;padding:13px 0;border-bottom:1px solid var(--line)}.result-facts>div:last-child{border:0}.result-facts dt{font-size:13px;color:var(--muted)}.result-facts dd{margin:0;font-size:15px;font-weight:500;overflow-wrap:anywhere}.result-source{color:var(--muted);font-size:12px;margin:22px 0 0;line-height:1.7}.result-status{color:var(--muted);line-height:1.7}@media(max-width:620px){.result-facts>div{grid-template-columns:1fr;gap:5px;padding:12px 0}.result-facts dd{font-size:14px}}
+</style>
 <div class="nav">
   <a href="{{ url_for('index') }}">New scan</a>
   {% if not demo_mode %}<a href="{{ url_for('download_pdf') }}">Download PDF report</a>{% endif %}
@@ -23,11 +26,34 @@
 </div>
 <div class="card">
   <h2>IP country &amp; network (IPinfo Lite)</h2>
-  <pre>{{ ip_geolocation | pprint }}</pre>
+  {% if ip_geolocation is mapping %}
+  <dl class="result-facts">
+    <div><dt>IP address</dt><dd>{{ ip_geolocation.get('ip', 'Unknown') }}</dd></div>
+    <div><dt>Country</dt><dd>{{ ip_geolocation.get('country', 'Unknown') }}</dd></div>
+    <div><dt>Continent</dt><dd>{{ ip_geolocation.get('continent', 'Unknown') }}</dd></div>
+    <div><dt>Network</dt><dd>{{ ip_geolocation.get('as_name', 'Unknown') }}</dd></div>
+    <div><dt>ASN</dt><dd>{{ ip_geolocation.get('asn', 'Unknown') }}</dd></div>
+    <div><dt>Network domain</dt><dd>{{ ip_geolocation.get('as_domain', 'Unknown') }}</dd></div>
+  </dl>
+  <p class="result-source">Source: IPinfo Lite. Country and network data only; city-level location is not included in this free tier.</p>
+  {% else %}<p class="result-status">{{ ip_geolocation }}</p>{% endif %}
 </div>
 <div class="card">
   <h2>Shodan indexed intelligence (passive)</h2>
-  <pre>{{ shodan_scan | pprint }}</pre>
+  {% if shodan_scan is mapping %}
+  <dl class="result-facts">
+    <div><dt>IP address</dt><dd>{{ shodan_scan.get('ip', 'Unknown') }}</dd></div>
+    <div><dt>Organization</dt><dd>{{ shodan_scan.get('organization', 'Unknown') }}</dd></div>
+    <div><dt>ISP</dt><dd>{{ shodan_scan.get('isp', 'Unknown') }}</dd></div>
+    <div><dt>ASN</dt><dd>{{ shodan_scan.get('asn', 'Unknown') }}</dd></div>
+    <div><dt>Indexed location</dt><dd>{{ shodan_scan.get('location', 'Unknown') }}</dd></div>
+    <div><dt>Hostnames</dt><dd>{{ shodan_scan.get('hostnames', []) | join(', ') or 'None indexed' }}</dd></div>
+    <div><dt>Open ports</dt><dd>{{ shodan_scan.get('open_ports', []) | join(', ') or 'None indexed' }}</dd></div>
+    <div><dt>Indexed services</dt><dd>{{ shodan_scan.get('services', []) | join(', ') or 'None indexed' }}</dd></div>
+    <div><dt>Last indexed</dt><dd>{{ shodan_scan.get('last_indexed', 'Unknown') }}</dd></div>
+  </dl>
+  <p class="result-source">Source: Shodan indexed intelligence. Passive lookup; no packets are sent to the target. Indexed results may be incomplete or out of date.</p>
+  {% else %}<p class="result-status">{{ shodan_scan }}</p>{% endif %}
 </div>
 <div class="card">
   <h2>Subdomains (crt.sh)</h2>
