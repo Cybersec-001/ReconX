@@ -24,8 +24,8 @@
       <td>{{ user.created_at.strftime('%Y-%m-%d') if user.created_at else "-" }}</td>
       <td>{{ user.last_login.strftime('%Y-%m-%d %H:%M') if user.last_login else "-" }}</td>
       <td>
-        <a href="{{ url_for('toggle_user', user_id=user.id) }}">{{ "Deactivate" if user.is_active else "Activate" }}</a> ·
-        <a href="{{ url_for('delete_user', user_id=user.id) }}">Delete</a>
+        <form method="POST" action="{{ url_for('toggle_user', user_id=user.id) }}"><button type="submit">{{ "Deactivate" if user.is_active else "Activate" }}</button></form>
+        <form method="POST" action="{{ url_for('delete_user', user_id=user.id) }}"><button type="submit">Delete</button></form>
       </td>
     </tr>
     {% endfor %}
