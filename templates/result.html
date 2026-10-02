@@ -3,8 +3,8 @@
 {% block content %}
 <div class="nav">
   <a href="{{ url_for('index') }}">New scan</a>
-  <a href="{{ url_for('download_pdf') }}">Download PDF report</a>
-  <a href="{{ url_for('logout') }}">Logout</a>
+  {% if not demo_mode %}<a href="{{ url_for('download_pdf') }}">Download PDF report</a>{% endif %}
+  {% if current_user.is_authenticated %}<a href="{{ url_for('logout') }}">Logout</a>{% endif %}
 </div>
 <div class="card">
   <h1>Scan results</h1>
