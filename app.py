@@ -244,7 +244,21 @@ def get_shodan_scan(ip):
         return "Shodan lookup unavailable: SHODAN_API_KEY is not set."
     try:
         host = shodan_api.host(ip)
-        return host
+        services = sorted({f"{item.get('port')}/{item.get('transport', 'tcp')}"
+                           for item in host.get('data', [])})
+        return {
+            'ip': host.get('ip_str'),
+            'organization': host.get('org'),
+            'isp': host.get('isp'),
+            'asn': host.get('asn'),
+            'location': ', '.join(part for part in
+                [host.get('city'), host.get('country_name')] if part) or 'Unknown',
+            'hostnames': host.get('hostnames', []),
+            'open_ports': sorted(host.get('ports', [])),
+            'services': services,
+            'last_indexed': host.get('last_update'),
+            'source': 'Shodan indexed intelligence (passive; no packets sent to the target)'
+        }
     except shodan.APIError as e:
         return f"Error: {str(e)}"
 
