@@ -21,6 +21,11 @@ from dotenv import load_dotenv
 import re
 import json
 import time
+import secrets
+import socket
+import ipaddress
+from urllib.parse import urlparse
+from flask import abort
 from bs4 import BeautifulSoup
 import urllib3
 urllib3.disable_warnings()
@@ -51,12 +56,30 @@ CENSYS_API_SECRET = os.getenv('CENSYS_API_SECRET')
 # Initialize Flask App
 app = Flask(__name__, static_folder="static")
 app.config['SECRET_KEY'] = SECRET_KEY
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///users.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///users.db').replace('postgres://', 'postgresql://', 1)
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax', SESSION_COOKIE_SECURE=os.getenv('RENDER') == 'true', MAX_CONTENT_LENGTH=16384)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=1)
 
 # Initialize extensions
 db = SQLAlchemy(app)
+
+@app.context_processor
+def csrf_context():
+    def csrf_token():
+        if '_csrf' not in session:
+            session['_csrf'] = secrets.token_urlsafe(32)
+        return session['_csrf']
+    return {'csrf_token': csrf_token}
+
+@app.before_request
+def protect_forms():
+    if request.method == 'POST':
+        supplied = request.form.get('csrf_token', '')
+        expected = session.get('_csrf', '')
+        if not expected or not secrets.compare_digest(supplied, expected):
+            abort(400, 'Form expired. Reload and try again.')
+
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
@@ -164,20 +187,32 @@ def validate_email(email):
         return "Invalid email format."
 
 # Website Title Extraction
+def public_target(url):
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('Use a public HTTP or HTTPS URL without credentials.')
+    if parsed.port not in (None, 80, 443):
+        raise ValueError('Only standard web ports are supported.')
+    addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80))
+    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+        raise ValueError('Private, local and reserved addresses are not allowed.')
+    return url
+
 def get_website_title(url):
     try:
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
-        response = requests.get(url, timeout=5)
-        response.raise_for_status()
-
-        # Use regex to extract title
-        title_match = re.search('<title>(.*?)</title>', response.text, re.IGNORECASE)
-        if title_match:
-            return title_match.group(1)
-        return "No title found"
-    except requests.exceptions.RequestException as e:
-        return f"Error: {str(e)}"
+        public_target(url)
+        # Redirects are not followed; every outbound target must be checked.
+        with requests.get(url, timeout=5, allow_redirects=False, stream=True) as response:
+            response.raise_for_status()
+            if response.is_redirect:
+                return 'Website redirects. Enter its final public URL.'
+            content = next(response.iter_content(65536), b'').decode('utf-8', errors='replace')
+        title = BeautifulSoup(content, 'html.parser').title
+        return title.get_text(strip=True)[:300] if title else 'No title found'
+    except Exception:
+        return 'Website title unavailable. Use a public HTTP/HTTPS URL; private addresses are blocked.'
 
 # IP Geolocation
 def get_ip_geolocation(ip):
@@ -247,7 +282,7 @@ def get_crt_subdomains(domain):
         if response.status_code == 200:
             data = response.json()
             subdomains = list(set([item['name_value'] for item in data]))
-            return subdomains
+            return sorted(set(name.strip() for value in subdomains for name in value.splitlines()))[:100]
         return "No subdomain data available"
     except Exception as e:
         return f"crt.sh Error: {str(e)}"
@@ -273,7 +308,7 @@ def get_wayback_urls(domain):
     """Get historical URLs from Wayback Machine"""
     try:
         response = requests.get(
-            f'http://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&collapse=urlkey',
+            f'https://web.archive.org/cdx/search/cdx?url=*.{domain}&output=json&collapse=urlkey&limit=100',
             timeout=10
         )
         if response.status_code == 200:
@@ -287,7 +322,27 @@ def get_wayback_urls(domain):
         return f"Wayback Machine Error: {str(e)}"
 
 # Routes
-@app.route("/", methods=["GET", "POST"])
+@app.route('/')
+def landing():
+    return render_template('landing.html')
+
+@app.route('/health')
+@limiter.exempt
+def health():
+    return {'status': 'ok'}
+
+@app.route('/demo')
+def demo():
+    return render_template('result.html', demo_mode=True,
+        whois_data='Sample domain: example.com\nReserved for documentation and examples.\nIllustrative result, not a live WHOIS query.',
+        email_validation='hello@example.com: valid email format (sample). This does not verify mailbox ownership.',
+        website_title='Example Domain (sample)',
+        ip_geolocation='Optional API key required for live geolocation.',
+        shodan_scan='Optional Shodan key required. ReconX reads indexed intelligence; it does not run port scans.',
+        subdomains=['www.example.com (illustrative)'],
+        wayback_urls=['https://example.com/ (illustrative)'])
+
+@app.route("/workspace", methods=["GET", "POST"])
 @login_required
 @limiter.limit("100 per hour")
 def index():
@@ -303,6 +358,16 @@ def index():
 
         if not all([domain, email, url, ip]):
             return render_template("index.html", error="All fields are required")
+
+        if not re.fullmatch(r'(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}', domain):
+            return render_template('index.html', error='Enter a domain name only, such as example.com.'), 400
+        try:
+            if not ipaddress.ip_address(ip).is_global:
+                raise ValueError()
+        except ValueError:
+            return render_template('index.html', error='Enter a public IP address.'), 400
+        if len(email) > 254 or len(url) > 2048:
+            return render_template('index.html', error='Input is too long.'), 400
 
         try:
             # Get all scan results
@@ -337,10 +402,13 @@ def index():
 @limiter.limit("3 per minute")
 def register():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
         confirm_password = request.form.get("confirm_password")
 
+        if not re.fullmatch(r'[a-zA-Z0-9_-]{3,40}', username) or not 10 <= len(password) <= 128:
+            flash('Use a 3-40 character username (letters, numbers, _ or -) and a 10-128 character password.')
+            return render_template('register.html'), 400
         if User.query.filter_by(username=username).first():
             flash("Username already exists")
             return render_template("register.html")
@@ -363,8 +431,8 @@ def register():
 @limiter.limit("5 per minute")
 def login():
     if request.method == "POST":
-        username = request.form.get("username")
-        password = request.form.get("password")
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
 
         user = User.query.filter_by(username=username).first()
         if user and user.check_password(password):
@@ -406,7 +474,7 @@ def admin():
     users = User.query.all()
     return render_template("admin.html", users=users)
 
-@app.route("/admin/user/<int:user_id>/toggle")
+@app.route("/admin/user/<int:user_id>/toggle", methods=["POST"])
 @login_required
 def toggle_user(user_id):
     if not current_user.is_admin:
@@ -423,7 +491,7 @@ def toggle_user(user_id):
     flash(f"User {user.username} {'activated' if user.is_active else 'deactivated'}")
     return redirect(url_for("admin"))
 
-@app.route("/admin/user/<int:user_id>/delete")
+@app.route("/admin/user/<int:user_id>/delete", methods=["POST"])
 @login_required
 def delete_user(user_id):
     if not current_user.is_admin:
@@ -446,13 +514,19 @@ def delete_user(user_id):
 def download_pdf():
     try:
         # Get all data from session
-        whois_data = session.get('whois_data')
-        email_validation = session.get('email_validation')
-        website_title = session.get('website_title')
-        ip_geolocation = session.get('ip_geolocation')
-        shodan_scan = session.get('shodan_scan')
-        subdomains = session.get('subdomains')
-        wayback_urls = session.get('wayback_urls')
+        report = session.get('report_id')
+        payload = scan_reports.get(report, (None, {}))
+        if not payload[0] or payload[0] != current_user.id:
+            flash('No report available. Run a new scan.')
+            return redirect(url_for('index'))
+        data = payload[1]
+        whois_data = data.get('whois_data')
+        email_validation = data.get('email_validation')
+        website_title = data.get('website_title')
+        ip_geolocation = data.get('ip_geolocation')
+        shodan_scan = data.get('shodan_scan')
+        subdomains = data.get('subdomains')
+        wayback_urls = data.get('wayback_urls')
 
         if not all([whois_data, email_validation, website_title, ip_geolocation, shodan_scan]):
             flash("No scan data available. Please perform a scan first.")
@@ -541,17 +615,18 @@ def download_pdf():
         flash(f"Error generating PDF: {str(e)}")
         return redirect(url_for('index'))
 
-# Store results in session after scan
+# Bounded temporary report cache. Gunicorn uses one worker on the demo host.
+scan_reports = {}
 def store_results_in_session(whois_data, email_validation, website_title, ip_geolocation, shodan_scan, subdomains, wayback_urls):
-    """Store all scan results in session for PDF generation"""
-    session['whois_data'] = whois_data
-    session['email_validation'] = email_validation
-    session['website_title'] = website_title
-    session['ip_geolocation'] = ip_geolocation
-    session['shodan_scan'] = shodan_scan
-    session['subdomains'] = subdomains
-    session['wayback_urls'] = wayback_urls
-    session.modified = True
+    scan_reports.pop(session.get('report_id'), None)
+    while len(scan_reports) >= 50:
+        scan_reports.pop(next(iter(scan_reports)))
+    report_id = secrets.token_urlsafe(24)
+    scan_reports[report_id] = (current_user.id, dict(whois_data=whois_data,
+        email_validation=email_validation, website_title=website_title,
+        ip_geolocation=ip_geolocation, shodan_scan=shodan_scan,
+        subdomains=subdomains, wayback_urls=wayback_urls))
+    session['report_id'] = report_id
 
 if __name__ == "__main__":
     # Debug stays OFF unless FLASK_DEBUG is explicitly enabled (never enable it in production)
