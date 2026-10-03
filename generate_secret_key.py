@@ -1,3 +1,4 @@
+import os
 import secrets
 from pathlib import Path
 
@@ -20,6 +21,10 @@ def update_env_file(secret_key, env_file_path=".env"):
         out.append(f"SECRET_KEY={secret_key}")
 
     env_path.write_text("\n".join(out) + "\n")
+    try:
+        os.chmod(env_path, 0o600)  # .env holds secrets: owner-only on Linux/macOS
+    except OSError:
+        pass  # Windows has no chmod semantics
 
 if __name__ == "__main__":
     new_secret_key = generate_secret_key()
