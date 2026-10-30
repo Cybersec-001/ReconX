@@ -196,7 +196,10 @@ def public_target(url):
         raise ValueError('Use a public HTTP or HTTPS URL without credentials.')
     if parsed.port not in (None, 80, 443):
         raise ValueError('Only standard web ports are supported.')
-    addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80))
+    try:
+        addresses = socket.getaddrinfo(parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80))
+    except socket.gaierror:
+        raise ValueError('Host could not be resolved.') from None
     if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
         raise ValueError('Private, local and reserved addresses are not allowed.')
     return url
