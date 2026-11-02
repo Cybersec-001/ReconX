@@ -79,8 +79,7 @@ def test_hibp_exception_fallback(monkeypatch):
 
 def test_crt_subdomains_split_deduped_sorted(monkeypatch):
     payload = [
-        {'name_value': 'b.example.com
-a.example.com'},
+        {'name_value': 'b.example.com\na.example.com'},
         {'name_value': 'a.example.com'},
         {'name_value': ' c.example.com '},
     ]
